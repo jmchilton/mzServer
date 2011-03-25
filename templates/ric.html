@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=9"/>
+<title>XIC: ${mz_center} m/z</title>
+<link rel="icon" type="image/png" href="${xicico}">
+<script src="${javascript}/browsertest.js"></script>
+<script src="${javascript}/dygraph-combined-test.js"></script>
+</head>
+<body>
+<center>
+<table id="the_table">
+<tr>
+<td align="center">XIC: ${mz_center} m/z</td><div style="display:none;" id="labels" ></div></td>
+</tr>
+<tr>
+<td><div id="graphdiv" style="width:800px; height:500px;"></div></td>
+</tr>
+<tr>
+<td height="5">
+</td>
+</tr>
+<tr>
+<td align="center">
+<div id="usagetip" style="font-family: arial, sans-serif; font-size:0.6em;">
+left-drag to zoom, left-click to open individual scans
+</div>
+</td>
+</tr>
+</table>
+</center>
+<script type="text/javascript">
+if(svgcheck){
+
+g = new Dygraph(document.getElementById('graphdiv'),'${data}',{labelsDiv: document.getElementById("labels"),labelsKMB: true,
+                clickCallback: function(e, x, pts) {
+                    window.open('${rurl_link}'+ x + '${ctype}') ;
+                },
+
+});
+
+} else {
+document.getElementById("graphdiv").innerHTML = "<img src='${pnglink}'/>"
+document.getElementById('usagetip').innerHTML="* upgrading to FF/Chrome/Safari/IE9 enables better graphics, zoom and scan click-through capabilities...<a href='http://blaispathways.dfci.harvard.edu/mzServer/apps/mzServer_ASMS2010.pdf'>Examples</a>"
+document.getElementById('the_table').deleteRow(0) ;
+
+}
+</script>
+</body>
+</html>

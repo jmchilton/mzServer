@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html><head>
+<meta http-equiv="X-UA-Compatible" content="IE=9"/>
+<title>Welcome to the mzServer!</title><link rel="icon" type="image/png" href="${icon}">
+<script src="${javascript}/browsertest.js"></script>
+</head>
+<body style="font-family:'Arial', Arial, san-serif;">
+
+<img src="http://blais.dfci.harvard.edu/mzServer/images/titlebar.png"/>
+
+<p>
+<hr>
+
+<p>
+
+
+This server provides complete and efficient access to ms and ms/ms data using a
+very simple API.
+
+
+
+<p>
+
+<ul>
+<li> <a href="#quickapi">Quick API Tutorial</a>
+<li> <a href="#example">Example Application</a>
+<li> <a href="#download">Set up your own mzServer</a>
+</ul>
+
+<p>
+
+For more information, see our <a href="http://www.mcponline.org/content/early/2011/01/25/mcp.M110.003988.abstract">paper</a> in MCP (in press), our <a href="http://blais.dfci.harvard.edu/mzServer/apps/mzServer_ASMS2010.pdf">ASMS 2010 poster</a>
+or contact <a href='&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#109;&#97;&#110;&#111;&#114;&#95;&#97;&#115;&#107;&#101;&#110;&#97;&#122;&#105;&#64;&#100;&#102;&#99;&#105;&#46;&#104;&#97;&#114;&#118;&#97;&#114;&#100;&#46;&#101;&#100;&#117;'>&#77;&#97;&#110;&#111;&#114;&#32;&#65;&#115;&#107;&#101;&#110;&#97;&#122;&#105;</a>.
+
+<hr>
+
+<a name="quickapi">
+<h2>Quick API Tutorial</h2>
+</a>
+
+<p>The following URLs are all live examples, click to try them out!
+<ul>
+
+<li> This is how to access a scan (note the <span style="color:green"><b>time</b></span>, in minutes):
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.291">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/<span style="color:green"><b>70.291</b><span>
+</a>
+
+<p>
+
+<li> This is how to extract a chromatogram (note the <span style="color:green"><b>time range</b></span> and <span style="color:red"><b>m/z range</b></span>):
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/xic/67.291-73.291/697.862-697.882">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/xic/<span style="color:green"><b>67.291-73.291</b></span>/<span style="color:red"><b>697.862-697.882</b></span>
+</a>
+
+<p>
+
+<li> This is how overlay a peptide hypothesis:
+<p>
+
+<a href='http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196/match/i-ELFDDPSpYVNIQNLDiK'>
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196/match/<span style="color:red"><b>i-</b></span>ELFDDPS<span style="color:red"><b>p</b></span>YVNIQNLD<span style="color:red"><b>i</b></span>K
+</a>
+
+<p>
+
+<li> This is how to get an svg, png, pdf, mgf or dta for a scan:
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196.svg">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196<b>.svg</b>
+</a>
+
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196.png">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196<b>.png</b>
+</a>
+
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196.pdf">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196<b>.pdf</b>
+</a>
+
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196.mgf">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196<b>.mgf</b>
+</a>
+
+<p>
+
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196.dta">
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.186<b>.dta</b>
+</a>
+
+<p>
+
+<li> And you can always try the .txt option...:
+<p>
+
+<a href="http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.196.txt"/>
+http://blais.dfci.harvard.edu/mzServer/files/FLT3_iTRAQ/scans/70.186<b>.txt</b>
+</a>
+
+<p>
+
+</ul>
+
+<hr>
+
+<a name="example">
+<h2>Example Application</h2>
+</a>
+
+Using this API it is possible to implement scalable complex mass-informatic applications
+and dataviewers. <a href="http://blais.dfci.harvard.edu/mzServer/apps/chromatoplot.html">Chromatoplot</a> is an example demonstrating
+a viewer for a large scale 3D fractionation scheme, the viewer provides instant and concurrent
+extraction of chromatograms from any 9 of 42 possible files entirely from within the browser!
+<p>
+
+<hr>
+
+<a name="download">
+<h2>Set up your own mzServer</h2>
+</a>
+
+
+You can run your own server by downloading this <a href="http://blais.dfci.harvard.edu/mzServer/apps/mzServer.zip">zipped directory structure</a> and running the script called 
+mzServer.mz -- for which you will need 
+a recent version of <a href="http://sourceforge.net/projects/multiplierz/">multiplierz</a> and Thermo's XDK (or if you would prefer, 
+the <b>free</b> <a href="http://sjsupport.thermofinnigan.com/public/detail.asp?id=586">MSFileReader</a> system). If you 
+would like to serve up WIFF files, you will need to get a copy of <a href="http://www.absciex.com/mk/get/SOFTWARE_PROTEINPILOT?_A=11269&_D=10836&_V=0">
+ProteinPilot</a> (you do not need an actual license, since by default it serves as a <b>free</b> results viewer).
+<p>
+
+</body>
+</html>

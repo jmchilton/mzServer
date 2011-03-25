@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=9"/>
+<script src="${javascript}/browsertest.js"></script>
+<link rel="icon" type="image/png" href="${ms2ico}">
+<title>time: ${scan_time} mins</title>
+</head>
+<body>
+<center>
+<iframe id="svgtv"  width="667" height="500" scrolling="no" src='${svglink}'>
+What, no iframe support?
+</iframe>
+
+<script type="text/javascript">if(!svgcheck){document.getElementById('svgtv').src="${pnglink}"}</script>
+
+
+<table border=0>
+<tr>
+<td align="center">
+<input type="button" value="prev ms1" onClick="window.location='${prev_ms1_link}'">
+<input type="button" value="prev scan" onClick="window.location='${prev_scan_link}'">
+<input type="button" value="XIC" ${disabled} onClick="window.location='${ric_link}'">
+<input type="button" value="next scan" onClick="window.location='${next_scan_link}'">
+<input type="button" value="next ms1" onClick="window.location='${next_ms1_link}'">
+</td>
+</tr>
+<tr>
+<td align="center">
+<span id="usagetip" style="font-family: arial, sans-serif; font-size:0.6em;">
+zoom with mousewheel, pan by left-click and drag
+</span>
+
+<script type="text/javascript">if(!svgcheck){document.getElementById('usagetip').innerHTML="* upgrading to FF/Chrome/Safari/IE9 enables zoom and pan capabilities..."}</script>
+
+</td>
+</tr>
+</table>
+</center>
+</body>
+</html>

@@ -1,0 +1,969 @@
+VERSION = "0.2.5"
+import sys; sys.coinit_flags = 0
+
+import os
+import cherrypy
+import time
+import glob
+import routes
+import subprocess
+import urllib
+
+import mzTools
+
+
+from mako.template import Template
+
+f = open("site.conf")
+data_path = f.readline().strip().split()[1]
+socket_host = f.readline().strip().split()[1]
+socket_port = int(f.readline().strip().split()[1])
+vals = f.readline().strip().split()
+if len(vals) == 3 :
+    proxy_rewrite_from = vals[1]
+    proxy_rewrite_to = vals[2]
+else :
+    proxy_rewrite_from = None
+    proxy_rewrite_to = None
+f.close()
+
+cherrypy.config.update({
+    'server.socket_host': socket_host,
+    'server.socket_port': socket_port,
+    'server.thread_pool': 10,
+    'tools.staticdir.root': os.path.realpath(".")
+})
+
+ids = {}
+if os.path.exists(data_path+"\\ids.txt") :
+    fids = open(data_path+"\\ids.txt")
+    for l in fids:
+        vals = l.strip().split("\t")
+        ids[vals[0]] = (vals[1],vals[2],vals[3])
+    fids.close()
+
+def to_last_slash(aString):
+    bString = aString[::-1]
+    return aString[:-1*bString.find("/")]
+
+def init_raw_bank(thread_index):
+    print "Thread %d: Got to init_raw_bank!!!" % thread_index
+    cherrypy.thread_data.id = thread_index
+    
+# Tell CherryPy to call "connect" for each thread, when it starts up 
+cherrypy.engine.subscribe('start_thread', init_raw_bank)
+
+
+type_mime = { ".html" : "text/html", ".csv" : "text/html", ".json" : "text/plain", ".txt" : "text/plain", ".png" : "image/png", ".svg" : "image/svg+xml", ".mgf" : "text/plain", ".dta" : "text/plain", ".pdf" : "application/pdf" }
+ 
+def curl(the_url):
+    specific = cherrypy.url(the_url)
+    if proxy_rewrite_from :
+        specific = specific.replace(proxy_rewrite_from,proxy_rewrite_to)
+    return specific
+
+javascript = curl('/javascript')
+favico = curl("/images/ms0ico.png")
+ms1ico = curl("/images/ms1ico.png")
+ms2ico = curl("/images/ms2ico.png") 
+xicico = curl("/images/ricico.png")
+#
+# This one is static per instance, so let's compile the template now...
+#
+welcome_template = Template(filename='templates/welcome.html')
+welcome_page = welcome_template.render(icon=favico,javascript=javascript)
+
+def rurl(name,*args, **kwargs):
+    kwargs["controller"] = name
+    kwargs["action"] = name
+    return curl(routes.url_for(*args, **kwargs))
+
+#Short Float...
+#I know there is a better way... Fix this later...
+def shf(aFloat,k=3):
+    format = "%%.%df" % k
+    return format % aFloat
+
+def ric_json_template(ric_data,mz_center,ctype,filename,pnglink):
+    data = "t,intensity,msms_intensity\\n"
+    for (t,s,msms_s) in ric_data:
+        if msms_s :
+            data += "%.3f,%.0f,%.0f\\n" % (t,s,msms_s)
+        else:
+            data += "%.3f,%.0f,\\n" % (t,s)
+    rurl_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=0.0)[:(-1*(3+len(ctype)))]
+    ric_template = Template(filename='templates/ric.html')
+    mz_center_str = "%.4f"%mz_center 
+    return ric_template.render(xicico=xicico,data=data,ctype=ctype,mz_center=mz_center_str,rurl_link=rurl_link,javascript=javascript,pnglink=pnglink)
+
+def ric_template(ric_data,mz_center,ctype,filename,pnglink):
+    if ctype == ".html":
+        return ric_json_template(ric_data,mz_center,ctype,filename,pnglink)
+
+    from cStringIO import StringIO
+
+    xic_time = []
+    xic_int = []
+    scan_dot = None #I don't currently distinguish the "source" scan...
+    bin_times = []
+    bin_ints = []
+    for (t,i,ii) in ric_data :
+        if ii :
+            bin_times.append(t)
+            bin_ints.append(ii)
+        else :
+            xic_time.append(t)
+            xic_int.append(i)
+    tmp = StringIO()
+    if ctype == ".png" :
+        fmt = "PNG"
+    if ctype == ".svg" :
+        fmt = "SVG"
+    if ctype == ".pdf" :
+        fmt = "PDF"
+        
+    mzTools.mz_image.make_xic_im(tmp, mz_center, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)    
+
+    text =  tmp.getvalue()
+    
+    return text
+
+
+def _make_tic(fig, tic_time, tic_int, scan_dot, bin_times, bin_ints):
+    '''Plots a TIC, with labels for the primary MSMS scan and any neighboring scans
+    in the same time and mz area.
+
+    This is an internal method, it expects a matplotlib Figure instance'''
+    
+    from matplotlib.ticker import ScalarFormatter
+
+    fig.clear()
+    fig.set_facecolor('w')
+
+    axes = fig.add_axes([0.125,  0.1,  0.775,  0.8])
+
+    axes.plot(tic_time, tic_int, '-g', linewidth=2, markeredgecolor='g',
+              markerfacecolor='g', markersize=2)
+
+    if len(bin_times) > 0:
+        axes.plot(bin_times, bin_ints, 'bo', markersize=4)
+
+    # plot the scan dot last, so it stays on top of other markers
+    if scan_dot is not None:
+        axes.plot([scan_dot[0]], [scan_dot[1]], 'b^', markersize=10)
+
+    #axes.set_title('TIC')
+    axes.set_xlabel('Time (min)')
+    axes.set_ylabel('Abundance')
+
+    axes.xaxis.set_major_formatter(ScalarFormatter(useOffset=False, useMathText=True))
+
+    return (zip(tic_time, tic_int) + ([scan_dot] if scan_dot else []),)
+
+def make_tic_im(save_file, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt='PNG'):
+    '''Plots a XIC, with labels for the primary MSMS scan and any neighboring scans
+    in the same time and mz area'''
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    fig = Figure()
+    _make_tic(fig, xic_time, xic_int, scan_dot, bin_times, bin_ints)
+    FigureCanvasAgg(fig).print_figure(save_file, dpi=80, format=fmt)
+
+def tic_template(tic_data,ctype,filename):
+
+    from cStringIO import StringIO
+
+    xic_time = []
+    xic_int = []
+    scan_dot = None #I don't currently distinguish the "source" scan...
+    bin_times = []
+    bin_ints = []
+    for (t,i,ii) in tic_data :
+        if ii :
+            bin_times.append(t)
+            bin_ints.append(ii)
+        else :
+            xic_time.append(t)
+            xic_int.append(i)
+    tmp = StringIO()
+    if ctype == ".png" :
+        fmt = "PNG"
+    if ctype == ".svg" :
+        fmt = "SVG"
+    if ctype == ".pdf" :
+        fmt = "PDF"
+        
+    make_tic_im(tmp, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)    
+
+    text =  tmp.getvalue()
+    
+    return text
+
+def scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,pnglink):
+    if ric_mass == 0.0 :
+        disabled = 'disabled="disabled"'
+        ico = ms1ico
+        title = "time: %.3f min" % float(scan_time)
+    else:
+        disabled = ""
+        ico = ms2ico
+        title = "time: %.3f min, (%.4f m/z)  " % (float(scan_time),float(ric_mass))
+
+    data = "mz,intensity\\n"
+    zs = ""
+    for vals in mzScan:
+        if len(vals) == 2:
+            data += "%f,%f\\n" % (vals[0],vals[1])
+        else:
+            data += "%f,%f\\n" % (vals[0],vals[1])
+            zs += "%d\\n" % vals[2]
+
+    scan_template = Template(filename='templates/scan.html')
+    prev_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(last_ms1))
+    prev_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(prev_time))
+    ric_link       = rurl("xic_request",filename=filename,ctype=ctype,start_time=shf(float(scan_time)-3),stop_time=shf(float(scan_time)+3),start_mz=shf(ric_mass-0.05),stop_mz=shf(ric_mass+0.05))
+    next_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_time))
+    next_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_ms1))
+    ric_last_slash = to_last_slash(ric_link)
+    text = scan_template.render(javascript=javascript,ico=ico,title=title,disabled=disabled,data=data,zs=zs,ric_last_slash=ric_last_slash,ctype=ctype,prev_ms1_link = prev_ms1_link,prev_scan_link = prev_scan_link,ric_link=ric_link,next_scan_link = next_scan_link,next_ms1_link = next_ms1_link,pnglink=pnglink)
+
+    return text
+
+def scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1):
+    if ctype == ".html":
+        pnglink = rurl("scan_request",filename=filename,ctype=".png",scan_time=scan_time)
+        return scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,pnglink)
+    
+    from cStringIO import StringIO
+
+    if ctype == ".png" :
+        fmt = "PNG"
+    if ctype == ".svg" :
+        fmt = "SVG"
+    if ctype == ".pdf" :
+        fmt = "PDF"
+    
+    tmp = StringIO()
+    printable = [(a[0],a[1]) for a in mzScan]
+    mzTools.mz_image.set_size(6.4,4.8)
+    mzTools.mz_image.make_ms2_im(tmp, printable, "c", None, labels=None, ion_list=('b', 'y'),charge='', score='', acquisition_time=scan_time, fmt=fmt, label_top=50, filter_labels=True)
+    text =  tmp.getvalue()
+    
+    return text
+
+def wiff_match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1):
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from cStringIO import StringIO
+    from mzFunctions import generate_labels
+    
+    fig = Figure()
+    tmp = StringIO()
+    print sequence
+    #sorted(scan, key=lambda mi: mi[1], reverse=True)[:label_top]
+    filtered = [(mz,int) for (mz,int) in mzScan if (int > 1 and mz >= 750.0) or (int > 2 and mz < 750.0)]
+    filtered = sorted(filtered, key=lambda mi: mi[1], reverse=True)[:1000]
+    labels = generate_labels(filtered,sequence, ions=('b','b++','y','y++'),tolerance=0.2) 
+    (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=labels, ion_list=('b','b++','y','y++'), charge='', score='', acquisition_time=scan_time, label_top=500, filter_labels=True)
+    if ctype in [".pdf",".png",".svg"] :
+        img_format = ctype
+        FigureCanvasAgg(fig).print_figure(tmp,format=img_format[-3:].upper(),dpi=80)
+    if ctype in [".html",".png",".svg",".pdf"] :
+        text =  tmp.getvalue()
+    if ctype == ".html" :
+        pnglink = rurl("match",filename=filename,ctype=".png",scan_time=scan_time,sequence=sequence)
+        wiff_template = Template(filename='templates/wiff_match.html')
+        scan_time_str = "%.2f" % float(scan_time)
+        img_text = urllib.quote(text)
+        text = wiff_template.render(ms2ico=ms2ico,scan_time=scan_time_str,img_text=img_text,javascript=javascript,pnglink=pnglink)
+
+    if ctype == ".txt" :
+        text = `labeled`
+
+    return text
+
+def old_match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type="cid",charge=0):
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from cStringIO import StringIO
+
+    
+    fig = Figure()
+    tmp = StringIO()
+    print sequence
+    if scan_type == "etd" :
+        if charge > 2 :
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2','c++', 'z+1++','z+2++'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
+        else:
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
+    else :
+        if charge > 2 :
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'b++', 'y', 'y++'), acquisition_time=scan_time, charge='', score='')
+        else:
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'y'), acquisition_time=scan_time, charge='', score='')            
+    if ctype in [".pdf",".png",".svg",".html"] :
+        img_format = ctype
+        if img_format == ".html" :
+            img_format = ".png"
+        FigureCanvasAgg(fig).print_figure(tmp,format=img_format[-3:].upper(),dpi=80)
+    if ctype in [".html",".png",".svg",".pdf"] :
+        text =  tmp.getvalue()
+    if ctype == ".html" :
+        if ric_mass == 0.0 :
+            disabled = 'disabled="disabled"'
+        else:
+            disabled = ""
+
+        match_template = Template(filename='templates/match.html')
+        scan_time_str = "%.2f" % float(scan_time)
+        img_text = urllib.quote(text)
+        prev_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(last_ms1))
+        prev_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(prev_time))
+        ric_link       = rurl("xic_request",filename=filename,ctype=ctype,start_time=shf(float(scan_time)-3),stop_time=shf(float(scan_time)+3),start_mz=shf(ric_mass-0.05),stop_mz=shf(ric_mass+0.05))
+        next_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_time))
+        next_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_ms1))
+        text = match_template.render(ms2ico=ms2ico,scan_time=scan_time_str,img_text=img_text,disabled=disabled,prev_ms1_link = prev_ms1_link,prev_scan_link = prev_scan_link,ric_link=ric_link,next_scan_link = next_scan_link,next_ms1_link = next_ms1_link,javascript=javascript)        
+
+    if ctype == ".txt" :
+        text = `labeled`
+
+    return text
+
+def match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type="cid",charge=0):
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from cStringIO import StringIO
+
+
+    fig = Figure()
+    tmp = StringIO()
+    print sequence
+    if scan_type == "etd" :
+        if charge > 2 :
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2','c++', 'z+1++','z+2++'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
+        else:
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
+    else :
+        if charge > 2 :
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'b++', 'y', 'y++'), acquisition_time=scan_time, charge='', score='')
+        else:
+            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'y'), acquisition_time=scan_time, charge='', score='')
+    if ctype in [".pdf",".png",".svg"] :
+        img_format = ctype
+        if img_format == ".svw" :
+            img_format = ".svg"
+        FigureCanvasAgg(fig).print_figure(tmp,format=img_format[-3:].upper(),dpi=80)
+    if ctype in [".png",".svg",".pdf"] :
+        text =  tmp.getvalue()
+    if ctype == ".svg" :
+        text = text.replace('viewBox="0 0 576 432"','')
+        text = text.replace('<g id="figure1">','<script xlink:href="%s/SVGPan.js"/><g id="viewport" transform="scale(1.18)">'%javascript)
+    if ctype == ".html" :
+        if ric_mass == 0.0 :
+            disabled = 'disabled="disabled"'
+        else:
+            disabled = ""
+
+        match_template = Template(filename='templates/match.html')
+        scan_time_str = "%.2f" % float(scan_time)
+        #img_text = urllib.quote(text)        
+        prev_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(last_ms1))
+        prev_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(prev_time))
+        ric_link       = rurl("xic_request",filename=filename,ctype=ctype,start_time=shf(float(scan_time)-3),stop_time=shf(float(scan_time)+3),start_mz=shf(ric_mass-0.05),stop_mz=shf(ric_mass+0.05))
+        next_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_time))
+        next_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_ms1))
+        svglink = rurl("match",filename=filename,ctype=".svg",scan_time=scan_time,sequence=sequence)
+        pnglink = rurl("match",filename=filename,ctype=".png",scan_time=scan_time,sequence=sequence)
+        text = match_template.render(ms2ico=ms2ico,scan_time=scan_time_str,disabled=disabled,prev_ms1_link = prev_ms1_link,prev_scan_link = prev_scan_link,ric_link=ric_link,next_scan_link = next_scan_link,next_ms1_link = next_ms1_link,javascript=javascript,svglink=svglink,pnglink=pnglink)
+
+    if ctype == ".txt" :
+        text = `labeled`
+
+    return text
+
+class Root:
+
+    def files(self):
+        rawfiles = glob.glob("%s\\*.raw" % self.filedir)
+        wifffiles = glob.glob("%s\\*.wiff" % self.filedir)
+        files = rawfiles + wifffiles
+        files = map(os.path.basename,files)
+        files = [(os.path.splitext(s)[0] + os.path.splitext(s)[1].lower()) for s in files]
+        return files
+        
+    def __init__(self,filedir=None):
+        print "Got to Root init!!!"
+        if not filedir:
+            self.filedir = os.path.abspath(os.curdir)
+        else:
+            self.filedir = filedir
+        self.raw_cache = {}
+        self.max_raws = 50
+
+    def confirm_and_extract(self,filename):
+        if filename[-4:].lower() != ".raw" and filename[-5:].lower() != ".wiff":
+            if os.path.exists(self.filedir+"\\"+filename+".raw"):
+                filename = filename + ".raw"
+            if os.path.exists(self.filedir+"\\"+filename+".wiff"):
+                filename = filename + ".wiff"
+        print "I am Thread%d... Hear me roar!!!" % cherrypy.thread_data.id
+
+        if not filename in self.raw_cache.keys() :
+            if len(self.raw_cache.keys()) >= self.max_raws :
+                to_delete = self.raw_cache.keys()[0]
+                dead_file = self.raw_cache[to_delete]
+                del self.raw_cache[to_delete]
+                dead_file.close()
+                print "non_thread_safe close of %s" % to_delete
+                
+            print "The file was not in the cache..."
+            self.raw_cache[filename] = mzAPI.mzFile(self.filedir+"\\"+filename)
+        return self.raw_cache[filename]
+
+    def welcome(self,ctype):
+        if ctype == "" :
+            ctype = ".html"
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = welcome_page
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = "Welcome to RESTful mzAPI"
+        return text
+
+    def dir(self,ctype):
+        files = self.files()
+        if ctype == "" :
+            ctype = ".html"
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = "<html><head></head><body><ul>"
+            for f in files:
+                short = os.path.splitext(f)[0]
+                text += '<li><a href="%s">%s</a>' % (rurl("file_request",filename=short,ctype=ctype),short)
+            text += "</ul></body></html>"
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = "\n".join(files)
+        return text
+
+    def file_request_bpc(self,filename,ctype):
+        return self.file_request(filename,ctype,True)
+
+    def file_request(self,filename,ctype,bpc=False):
+        file = self.confirm_and_extract(filename)
+        (start_time,stop_time) = file.time_range()
+        print start_time,stop_time
+        acq_length = "%.2f" % stop_time
+        scans = file.scan_list(0.0,10000.0,0.0,10000.0)
+        scan_count = len(scans)
+        survey_ts = [t for (t,mz) in scans if mz == 0.0]
+        survey_count = len(survey_ts)
+        start_mz = 1.0
+        stop_mz = 10000.0
+        if bpc:
+            ric_data = []
+            for t in survey_ts:
+                ric_data.append( (t,max([s for (mz,s,n,z) in file.lscan(file.scanForTime(t))])) )
+        else:
+            ric_data = file.xic(start_time,stop_time,start_mz,stop_mz)
+        msmsts = [t for (t,mz,sname,stype,smode) in file.scan_info(start_time,stop_time,start_mz-1.5,stop_mz+1.5) if stype != "MS1"]
+        msmsts.sort()
+        prev_t = start_time
+        prev_s = 0.0
+        aug_ric_data = []
+        for (t,s) in ric_data:
+            while len(msmsts) and msmsts[0] > prev_t and msmsts[0] < t :
+                inter = msmsts[0]
+                msmsts = msmsts[1:]
+                prop = (inter-prev_t)/(t-prev_t)
+                inter_s = prop*s + (1-prop)*prev_s
+                aug_ric_data.append( (inter,inter_s,inter_s) )
+            aug_ric_data.append( (t,s,None) ) 
+            prev_t = t
+            prev_s = s
+        t = stop_time
+        s = 0.0
+        for inter in msmsts:
+            prop = (inter-prev_t)/(t-prev_t)
+            inter_s = prop*s + (1-prop)*prev_s
+            aug_ric_data.append( (inter,inter_s,inter_s) )
+        data = "t,intensity,msms_intensity\\n"
+        for (t,s,msms_s) in aug_ric_data:
+            if msms_s :
+                data += "%.3f,%.0f,%.0f\\n" % (t,s,msms_s)
+            else:
+                data += "%.3f,%.0f,\\n" % (t,s)
+        rurl_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=0.0)[:(-1*(3+len(ctype)))]
+
+        file_template = Template(filename='templates/file.html')
+        if ctype == "":
+            ctype = ".html"
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            if bpc :
+                pnglink = rurl("file_request_bpc",filename=filename,ctype=".png")
+            else :
+                pnglink = rurl("file_request",filename=filename,ctype=".png")
+            if bpc:
+                ticbpc = "BPC"
+            else:
+                ticbpc = "TIC"
+                
+            text = file_template.render(ctype=ctype,javascript=javascript,rurl_link=rurl_link,ico=xicico,filename=filename,data=data,scans=scan_count,survey_scans=survey_count,acq_length=acq_length,pnglink=pnglink,ticbpc=ticbpc)    
+        if ctype in [".pdf",".png",".svg"]:
+            cherrypy.response.headers['Content-Type'] = type_mime[ctype]
+            text = tic_template(aug_ric_data,ctype,filename)
+        if not ctype in [".pdf",".png",".svg",".html"]:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = filename
+        return text
+
+    def scan_list(self,filename,ctype):
+
+        file = self.confirm_and_extract(filename)
+        #temp fix, need to lookup defaults
+        #scans = file.scan_list()
+        scans = file.scan_list(0.0,10000.0,0.0,10000.0)
+        if ctype == ".html" or ctype == "":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = "<html><head></head><body>"
+            for (t,mz) in scans:
+                shft = shf(t)
+                if mz > 0.0 :
+                    text += '<a href="%s">%s</a>(<a href="%s">%s</a>)<br>' % (rurl("scan_request",filename=filename,ctype=ctype,scan_time=shft),shft,rurl("xic_request",filename=filename,ctype=ctype,start_time=shf(t-3),stop_time=shf(t+3),start_mz=shf(mz-0.05),stop_mz=shf(mz+0.05)),shf(mz))
+                else:
+                    text += '<a href="%s">%s</a><br>' % (rurl("scan_request",filename=filename,ctype=ctype,scan_time=shft),shft)
+                    
+            text += "</body></html>"
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = ""
+            for (t,mz) in scans:
+                text += '%.3f\t%.4f\n' % (t,mz)
+        return text
+
+    def scan_info(self,filename,ctype):
+        file = self.confirm_and_extract(filename)
+        scans = file.scan_info(*file.time_range())
+        cherrypy.response.headers['Content-Type'] = "text/plain"
+        text = ""
+        for (t,mz,sname,stype,smode) in scans:
+            text += '%.3f\t%.4f\t%s\t%s\n' % (t,mz,stype,smode)
+        return text
+
+    def scan_number_request(self,filename,scan,ctype):
+        scan = int(scan[4:])
+        file = self.confirm_and_extract(filename)
+        the_time = file.scan_list()[scan-1][0]
+        return self.scan_request(filename,the_time,ctype)
+
+    def scan_request(self,filename,scan_time,ctype):
+        file = self.confirm_and_extract(filename)
+        if file.file_type == "raw" :
+            the_filters = file.filters()
+            (first,last) = file.scan_range()
+            scan_num = file.scanForTime(float(scan_time))
+            precursor = 0.0
+            charge = 0
+            if the_filters[scan_num-1][1].find("FTMS") > -1:
+                if ctype != ".txt":
+                    mzScan = [(mz,s,z) for (mz,s,n,z) in file.lscan(scan_num)]
+                else:
+                    mzScan = [(mz,s) for (mz,s,n,z) in file.lscan(scan_num)]
+            else:
+                mzScan = file.scan(float(scan_time))
+            try:
+                precursor = 0.0
+                charge = 0
+                (precursor,charge) = file.scanPrecursor(scan_num)
+            except:
+                pass
+            
+            cherrypy.response.headers['Content-Type'] = type_mime[ctype]
+            if ctype == ".txt":
+                cherrypy.response.headers['Content-Type'] = "text/plain"
+                text = ""
+                for vals in mzScan:
+                    text += "%.6f\t%.0f\n" % (vals[0], vals[1])
+            if ctype == ".dta":
+                cherrypy.response.headers['Content-Type'] = "text/plain"
+                text = ""
+                if charge :
+                    text += "%.4f %d\n" % (charge*precursor - (charge-1)*1.007282675,charge)
+                for vals in mzScan:
+                    text += "%.4f %.0f\n" % (vals[0], vals[1])
+            if ctype == ".mgf":
+                cherrypy.response.headers['Content-Type'] = "text/plain"
+                text = ""
+                text += "MASS=Monoisotopic\n"
+                text += "SEARCH=MIS\n"
+                text += "BEGIN IONS\n"
+                text += "TITLE=%s\n" % curl("%.3f" % (float(scan_time)))
+                if precursor > 0.0 :
+                    text += "PEPMASS=%.4f\n" % precursor
+                if charge > 0 :
+                    text += "CHARGE=%d+\n" % charge
+                for vals in mzScan:
+                    text += "%.4f\t%.0f\n" % (vals[0], vals[1])
+                text += "END IONS\n"
+            if ctype not in [".txt",".mgf",".dta"]:
+                if scan_num == last :
+                    next_time = scan_time
+                else:
+                    next_time = file.timeForScan(scan_num + 1)
+                    if scan_num == first :
+                        prev_time = scan_time
+                    else:
+                        prev_time = file.timeForScan(scan_num - 1)
+                if the_filters[scan_num-1][1].find("Full ms ") > -1:
+                    print "I think this is an MS1..."
+                    ric_mass = 0.0
+                else:
+                    print "I think this is an MS2..."
+                    try :
+                        ric_mass = file.scanPrecursor(scan_num)[0]
+                    except :
+                        ric_mass = 0.0
+                print "RIC MASS:",ric_mass
+                next_ms1 = -1.0
+                ms1_nscan = scan_num
+                while ms1_nscan != last:
+                    ms1_nscan += 1
+                    if the_filters[ms1_nscan-1][1].find("Full ms ") > -1 :
+                        next_ms1 = file.timeForScan(ms1_nscan)
+                        break
+                last_ms1 = -1.0
+                ms1_lscan = scan_num
+                while ms1_lscan != first:
+                    ms1_lscan -= 1
+                    if the_filters[ms1_lscan-1][1].find("Full ms ") > -1 :
+                        last_ms1 = file.timeForScan(ms1_lscan)
+                        break
+
+                text = scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1)
+        if file.file_type == "wiff" :
+            scan_time = float(scan_time)
+            (first_time,last_time) = file.time_range()
+            target_time = float(scan_time)
+            mzScan = []
+            while not mzScan:
+                mzScan = file.scan(target_time,add_zeros=False)
+                target_time -= 0.001            
+            #mzScan = file.scan(float(scan_time))
+            precursor = mzScan.mz
+            charge = mzScan.z
+            cherrypy.response.headers['Content-Type'] = type_mime[ctype]
+            if ctype == ".txt":
+                cherrypy.response.headers['Content-Type'] = "text/plain"
+                text = ""
+                for vals in mzScan:
+                    text += "%.4f\t%.0f\n" % (vals[0], vals[1])
+            if ctype == ".dta":
+                cherrypy.response.headers['Content-Type'] = "text/plain"
+                text = ""
+                text += "%.4f %d\n" % (charge*precursor - (charge-1)*1.007282675,charge)
+                for vals in mzScan:
+                    text += "%.4f %.0f\n" % (vals[0], vals[1])
+            if ctype == ".mgf":
+                cherrypy.response.headers['Content-Type'] = "text/plain"
+                text = ""
+                text += "MASS=Monoisotopic\n"
+                text += "SEARCH=MIS\n"
+                text += "BEGIN IONS\n"
+                text += "TITLE=%s\n" % curl("%.3f" % (float(scan_time)))
+                if precursor > 0.0 :
+                    text += "PEPMASS=%.4f\n" % precursor
+                if charge > 0 :
+                    text += "CHARGE=%d+\n" % charge
+                for vals in mzScan:
+                    text += "%.4f\t%.0f\n" % (vals[0], vals[1])
+                text += "END IONS\n"
+            if ctype not in [".txt",".mgf",".dta"]:
+                text = scan_template(mzScan,scan_time,ctype,filename,-1.0,scan_time,precursor,scan_time,-1.0)
+                
+        return text
+
+    def header_request(self,filename,scan_time,ctype):
+        if ctype == "":
+            ctype = ".html"
+        file = self.confirm_and_extract(filename)
+        attributes =  file.extra_info(file.scanForTime(float(scan_time)))
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = "<html><head></head><body>"
+            text +="<table>\n"
+            for (attr,val) in attributes.items():
+                text += "<tr>"
+                text += '<td align="right">'
+                text += "%s:" % attr
+                text += "</td>"
+                text += "<td>"
+                if type(val) == float :
+                    strval = "%.4f" % val
+                else:
+                    strval = `val`
+                text += "%s" % strval
+                text += "</td>"            
+                text += "</tr>\n"
+            text += "</table></body></html>"
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = ""
+            for (attr,val) in attributes.items():
+                if type(val) == float :
+                    strval = "%.4f" % val
+                else:
+                    strval = `val`
+                text += "%s\t%s\n" % (attr, strval)
+        return text
+
+    def id_request(self,filename,scan_time,ctype):
+        global ids
+        if ctype == "":
+            ctype = ".html"
+        file = self.confirm_and_extract(filename)
+        scan_num = file.scanForTime(float(scan_time))
+        short_time = shf(file.timeForScan(scan_num))
+        regen_name = filename+"/scans/"+short_time
+        if ids.has_key(regen_name) :
+            (clean_pep,pep,score) = ids[regen_name]
+        else:
+            clean_pep = pep = score = ""
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = "<html><head></head><body>"
+            if pep :
+                path_to_scan = curl("")
+                path_to_scan = path_to_scan[:path_to_scan.find("/files/")]
+                text +='<a href="%s">%s</a>&nbsp;(<a href="http://www.pep2pro.org/UniRef100-IL/%s">Possible Sources</a>,Score=%s)\n' % (path_to_scan +"/files/" + regen_name + "/match/" + pep,pep,clean_pep,score)
+            text += "</body></html>"
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = "%s\t%s\t%s" % (pep,clean_pep,score)
+        return text
+
+    def filter_request(self,filename,scan_time,ctype):
+        if ctype == "":
+            ctype = ".html"
+        file = self.confirm_and_extract(filename)
+        filter = file.filters()[file.scanForTime(float(scan_time))-1][1]
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = "<html><head></head><body>"
+            text += filter
+            text += "</body></html>"
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = filter
+        return text
+
+    def version(self,ctype):
+        cherrypy.response.headers['Content-Type'] = "text/plain"
+        return VERSION
+
+    def filters_request(self,filename,ctype):
+        if ctype == "":
+            ctype = ".html"
+        file = self.confirm_and_extract(filename)
+        filters = file.filters()
+        if ctype == ".html":
+            cherrypy.response.headers['Content-Type'] = "text/html"
+            text = "<html><head></head><body>"
+            for (scan_time,filter) in filters:
+                shft = shf(scan_time)
+                text += '<a href="%s"/>%s</a><br>' % (rurl("scan_request",filename=filename,ctype=ctype,scan_time=shft),filter)
+            text += "</body></html>"
+        else:
+            cherrypy.response.headers['Content-Type'] = "text/plain"
+            text = ""
+            for (scan_time,filter) in filters:
+                text += "%s\t%.3f\n" % (filter,scan_time)
+            
+        return text
+
+    def xic_request(self,filename,start_time,stop_time,start_mz,stop_mz,ctype):
+        if ctype == "":
+            ctype = ".html"
+        file = self.confirm_and_extract(filename)
+        start_time_float = float(start_time)
+        stop_time_float = float(stop_time)
+        start_mz_float = float(start_mz)
+        stop_mz_float = float(stop_mz)
+        ric_data = file.xic(start_time_float,stop_time_float,start_mz_float,stop_mz_float)
+        msmsts = [t for (t,mz,sname,stype,smode) in file.scan_info(start_time_float,stop_time_float,start_mz_float-1.5,stop_mz_float+1.5) if stype != "MS1"]
+        msmsts.sort()
+        prev_t = start_time_float
+        prev_s = 0.0
+        aug_ric_data = []
+        for (t,s) in ric_data:
+            while len(msmsts) and msmsts[0] > prev_t and msmsts[0] < t :
+                inter = msmsts[0]
+                msmsts = msmsts[1:]
+                prop = (inter-prev_t)/(t-prev_t)
+                inter_s = prop*s + (1-prop)*prev_s
+                aug_ric_data.append( (inter,inter_s,inter_s) )
+            aug_ric_data.append( (t,s,None) ) 
+            prev_t = t
+            prev_s = s
+        t = stop_time_float
+        s = 0.0
+        for inter in msmsts:
+            prop = (inter-prev_t)/(t-prev_t)
+            inter_s = prop*s + (1-prop)*prev_s
+            aug_ric_data.append( (inter,inter_s,inter_s) )
+
+        cherrypy.response.headers['Content-Type'] = type_mime[ctype]
+        if ctype == ".txt":
+            text = ""
+            for (t,s,msms_s) in aug_ric_data:
+                text += "%.3f\t%.0f\n" % (t, s)
+        if ctype == ".csv":
+            text = ""
+            for (t,s,msms_s) in aug_ric_data:
+                if msms_s :
+                    text += "%.3f,%.0f,%.0f\n" % (t, s, msms_s)
+                else:
+                    text += "%.3f,%.0f,\n" % (t, s)                
+        if ctype not in [".txt",".csv"]:
+            pnglink = rurl("xic_request",filename=filename,ctype=".png",start_time=start_time,stop_time=stop_time,start_mz=start_mz,stop_mz=stop_mz)
+            text = ric_template(aug_ric_data,(start_mz_float + stop_mz_float)/2.0,ctype,filename,pnglink)
+        return text
+
+    def ric_request(self,filename,start_time,stop_time,start_mz,stop_mz,ctype):
+        return self.xic_request(filename,start_time,stop_time,start_mz,stop_mz,ctype)
+
+    def scan_number_match(self,filename,scan,sequence,ctype):
+        scan = int(scan[4:])
+        file = self.confirm_and_extract(filename)
+        the_time = file.scan_list()[scan-1][0]
+        return self.match(filename,the_time,sequence,ctype)
+    
+    def match(self,filename,scan_time,sequence,ctype):
+        cherrypy.response.headers['Content-Type'] = type_mime[ctype]
+        
+        file = self.confirm_and_extract(filename)
+        if file.file_type == "raw" :
+            the_filters = file.filters()
+            (first,last) = file.scan_range()
+            scan_num = file.scanForTime(float(scan_time))
+            if the_filters[scan_num-1][1].find("FTMS") > -1:
+                mzScan = [(mz,s) for (mz,s,z,n) in file.lscan(scan_num)]
+            else:
+                mzScan = file.scan(float(scan_time))
+
+            if scan_num == last :
+                next_time = scan_time
+            else:
+                next_time = file.timeForScan(scan_num + 1)
+                if scan_num == first :
+                    prev_time = scan_time
+                else:
+                    prev_time = file.timeForScan(scan_num - 1)
+            if the_filters[scan_num-1][1].find("Full ms ") > -1:
+                print "I think this is an MS1..."
+                ric_mass = 0.0
+            else:
+                print "I think this is an MS2..."
+                try :
+                    (ric_mass,charge) = file.scanPrecursor(scan_num)
+                except :
+                    ric_mass = 0.0
+                    charge = 0
+            print "RIC MASS:",ric_mass
+            next_ms1 = -1.0
+            ms1_nscan = scan_num
+            while ms1_nscan != last:
+                ms1_nscan += 1
+                if the_filters[ms1_nscan-1][1].find("Full ms ") > -1 :
+                    next_ms1 = file.timeForScan(ms1_nscan)
+                    break
+            last_ms1 = -1.0
+            ms1_lscan = scan_num
+            while ms1_lscan != first:
+                ms1_lscan -= 1
+                if the_filters[ms1_lscan-1][1].find("Full ms ") > -1 :
+                    last_ms1 = file.timeForScan(ms1_lscan)
+                    break
+            scan_type = "cid"
+            if the_filters[scan_num-1][1].find("@etd") > -1 :
+                scan_type = "etd"
+            if the_filters[scan_num-1][1].find("@hcd") > -1:
+                scan_type = "hcd"
+            if the_filters[scan_num-1][1].find("@cid") > -1:
+                scan_type = "cid"
+            text = match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type,charge)
+        else:
+            target_time = float(scan_time)
+            mzScan = []
+            while not mzScan:
+                mzScan = file.scan(target_time,add_zeros=False)
+                target_time -= 0.001
+                
+            text = wiff_match_template(scan_time,mzScan,sequence,ctype,filename,float(scan_time),float(scan_time),0.0,float(scan_time),float(scan_time))
+        return text
+
+
+class TypedRoutesDispatcher(cherrypy.dispatch.RoutesDispatcher):
+    
+    def __init__(self, root, full_result=False):
+        self.root = root
+        self.server_types = ["txt","html","png","svg","pdf","mgf","json","csv","dta"]
+        self.type_regex = "{ctype:" + "|".join(map(lambda x: "\."+x,self.server_types)) + "}"
+        super(TypedRoutesDispatcher,self).__init__(full_result)
+        
+    def __call__(self, path_info):
+        print "trailing slash?", path_info[-1]
+        if path_info[-1] == "/" :
+            path_info = path_info[:-1]
+        print "path_info", type(path_info), path_info
+        print "suffix:", path_info[-3:]
+        if len(path_info) == 0 :
+            print "This wants to go to the welcome page..."
+            return super(TypedRoutesDispatcher,self).__call__(path_info+"/.html")                    
+        if path_info[-3:] in self.server_types or path_info[-4:] in self.server_types:
+            print "Recognized", path_info[-4:]
+            super(TypedRoutesDispatcher,self).__call__(path_info)
+        else:
+            print "modifying path..."
+            super(TypedRoutesDispatcher,self).__call__(path_info+".html")
+
+    def typed_connect(self,n,r):
+        super(TypedRoutesDispatcher,self).connect(name=n,route=r+self.type_regex,controller=self.root,action=n)
+
+filedir = data_path
+d = TypedRoutesDispatcher(Root(filedir))
+
+m = d.mapper
+m.explicit = True
+m.minimization = True
+
+link = lambda n,r: d.typed_connect(n,r)
+link('welcome','')
+link('dir',R"files")
+link('version',R'version')
+link('file_request',R'files/{filename}')
+link('file_request_bpc',R'files/{filename}/bpc')
+link('scan_list',R'files/{filename}/scans')
+link('scan_info',R'files/{filename}/scan_info')
+link('scan_request',R'files/{filename}/scans/{scan_time:[-+]?[0-9]*\.?[0-9]+}')
+link('scan_number_request',R'files/{filename}/scans/{scan:scan[0-9]+}')
+link('header_request',R'files/{filename}/scans/{scan_time:[-+]?[0-9]*\.?[0-9]+}/header')
+link('id_request',R'files/{filename}/scans/{scan_time:[-+]?[0-9]*\.?[0-9]+}/peptide')
+link('filter_request',R'files/{filename}/scans/{scan_time:[-+]?[0-9]*\.?[0-9]+}/filter')
+link('filters_request',R'files/{filename}/filters')
+link('scan_number_match',R'files/{filename}/scans/{scan:scan[0-9]+}/match/{sequence}')
+link('match',R'files/{filename}/scans/{scan_time:[-+]?[0-9]*\.?[0-9]+}/match/{sequence}')
+link('xic_request',R"files/{filename}/xic/{start_time}-{stop_time}/{start_mz}-{stop_mz:[-+]?[0-9]*\.?[0-9]+}")
+link('ric_request',R"files/{filename}/ric/{start_time}-{stop_time}/{start_mz}-{stop_mz:[-+]?[0-9]*\.?[0-9]+}")
+
+conf = {'/': {'request.dispatch': d}, '/javascript' : {'tools.staticdir.on' : True, 'tools.staticdir.dir' : "javascript"}, '/images' : {'tools.staticdir.on' : True, 'tools.staticdir.dir' : "images"}, '/css' : {'tools.staticdir.on' : True, 'tools.staticdir.dir' : "css"}, '/apps' : {'tools.staticdir.on' : True, 'tools.staticdir.dir' : "static",'tools.staticdir.content_types': {'svg': 'image/svg+xml'}}}
+
+cherrypy.tree.mount(root=None, config=conf)
+if hasattr(cherrypy.engine, "signal_handler"):
+    cherrypy.engine.signal_handler.subscribe()
+if hasattr(cherrypy.engine, "console_control_handler"):
+    cherrypy.engine.console_control_handler.subscribe()
+
+cherrypy.engine.start()
+cherrypy.engine.block()
