@@ -9,8 +9,8 @@ import routes
 import subprocess
 import urllib
 
-import mzTools
-
+import multiplierz.mzTools as mzTools
+import multiplierz.mzAPI as mzAPI
 
 from mako.template import Template
 
@@ -30,7 +30,7 @@ f.close()
 cherrypy.config.update({
     'server.socket_host': socket_host,
     'server.socket_port': socket_port,
-    'server.thread_pool': 10,
+    'server.thread_pool': 1,
     'tools.staticdir.root': os.path.realpath(".")
 })
 
@@ -235,7 +235,7 @@ def tic_template(tic_data,ctype,filename):
     if ctype == ".pdf" :
         fmt = "PDF"
     
-    mzTools.mz_image.set_size(6.4,4.8)        
+    #    mzTools.mz_image.set_size(6.4,4.8)        
     make_tic_im(tmp, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)    
 
     text =  tmp.getvalue()
@@ -304,11 +304,12 @@ def scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,ne
     fig = Figure()
     tmp = StringIO()
     #printable = [(a[0],a[1]) for a in mzScan]
-    mzTools.mz_image.set_size(6.4,4.8)
+    #    mzTools.mz_image.set_size(6.4,4.8)
 
     #mzTools.mz_image.make_ms2_im(fig, mzScan, "c", None, labels=None, ion_list=('b', 'y'), acquisition_time=scan_time, charge=charge, score='',filter_labels=False,scan_number=scan_num)
     if ric_mass == 0 :
-        mzScan = [(x,y) for (x,y,z) in mzScan]
+        #print mzScan
+        #mzScan = [(x,y) for (x,y,z) in mzScan]
         charge = 0
         precursor_mz = 0
         mzTools.mz_image._make_ms2(fig, mzScan, "c", None, title="time=%.2fmin  (scan# %d)" % (float(scan_time),scan_num), labels=None, ion_list=(['b', 'y']+precursor_ions),filter_labels=False, charge=charge)
@@ -330,7 +331,7 @@ def wiff_match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_t
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from cStringIO import StringIO
-    from mzFunctions import generate_labels
+    from multipierz.mzFunctions import generate_labels
     
     fig = Figure()
     tmp = StringIO()
@@ -361,7 +362,7 @@ def match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,r
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from cStringIO import StringIO
-    from mzFunctions import generate_labels
+    from multiplierz.mzFunctions import generate_labels
 
     fig = Figure()
     tmp = StringIO()
