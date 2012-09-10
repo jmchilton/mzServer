@@ -121,8 +121,10 @@ def ric_template(ric_data,mz_center,ctype,filename,pnglink):
         fmt = "SVG"
     if ctype == ".pdf" :
         fmt = "PDF"
-        
-    mzTools.mz_image.make_xic_im(tmp, mz_center, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)    
+
+    #mzTools.mz_image.set_size(6.4,4.8)
+    #mzTools.mz_image.make_xic_im(tmp, mz_center, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)    
+    make_xic_im(tmp, mz_center, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)
 
     text =  tmp.getvalue()
     
@@ -161,12 +163,52 @@ def _make_tic(fig, tic_time, tic_int, scan_dot, bin_times, bin_ints):
     return (zip(tic_time, tic_int) + ([scan_dot] if scan_dot else []),)
 
 def make_tic_im(save_file, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt='PNG'):
-    '''Plots a XIC, with labels for the primary MSMS scan and any neighboring scans
+    '''Plots a TIC, with labels for the primary MSMS scan and any neighboring scans
     in the same time and mz area'''
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     fig = Figure()
     _make_tic(fig, xic_time, xic_int, scan_dot, bin_times, bin_ints)
+    FigureCanvasAgg(fig).print_figure(save_file, dpi=80, format=fmt)
+
+def _make_xic(fig, xic_center, xic_time, xic_int, scan_dot, bin_times, bin_ints):
+    '''Plots a XIC, with labels for the primary MSMS scan and any neighboring scans
+    in the same time and mz area.
+
+    This is an internal method, it expects a matplotlib Figure instance'''
+    
+    from matplotlib.ticker import ScalarFormatter
+
+    fig.clear()
+    fig.set_facecolor('w')
+
+    axes = fig.add_axes([0.125,  0.1,  0.775,  0.8])
+
+    axes.plot(xic_time, xic_int, '-g', linewidth=2, markeredgecolor='g',
+              markerfacecolor='g', markersize=2)
+
+    if len(bin_times) > 0:
+        axes.plot(bin_times, bin_ints, 'bo', markersize=4)
+
+    # plot the scan dot last, so it stays on top of other markers
+    if scan_dot is not None:
+        axes.plot([scan_dot[0]], [scan_dot[1]], 'b^', markersize=10)
+
+    #axes.set_title('TIC')
+    axes.set_xlabel('Time (min)')
+    axes.set_ylabel('Abundance')
+
+    axes.xaxis.set_major_formatter(ScalarFormatter(useOffset=False, useMathText=True))
+
+    return (zip(xic_time, xic_int) + ([scan_dot] if scan_dot else []),)
+
+def make_xic_im(save_file, xic_center, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt='PNG'):
+    '''Plots an XIC, with labels for the primary MSMS scan and any neighboring scans
+    in the same time and mz area'''
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    fig = Figure()
+    _make_xic(fig, xic_center, xic_time, xic_int, scan_dot, bin_times, bin_ints)
     FigureCanvasAgg(fig).print_figure(save_file, dpi=80, format=fmt)
 
 def tic_template(tic_data,ctype,filename):
@@ -192,22 +234,30 @@ def tic_template(tic_data,ctype,filename):
         fmt = "SVG"
     if ctype == ".pdf" :
         fmt = "PDF"
-        
+    
+    mzTools.mz_image.set_size(6.4,4.8)        
     make_tic_im(tmp, xic_time, xic_int, scan_dot, bin_times, bin_ints, fmt)    
 
     text =  tmp.getvalue()
     
     return text
 
-def scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,pnglink):
+def scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,pnglink,charge,scan_num):
     if ric_mass == 0.0 :
         disabled = 'disabled="disabled"'
         ico = ms1ico
-        title = "time: %.3f min" % float(scan_time)
+        title = "time: %.3f min (scan# %d)" % (float(scan_time),scan_num)
     else:
+        chargestr = ""
+        if charge :
+            chargestr = "(%d+)" % charge 
+        scanstr = ""
+        if scan_num :
+            scanstr = " (scan# %d)" % scan_num
+
         disabled = ""
         ico = ms2ico
-        title = "time: %.3f min, (%.4f m/z)  " % (float(scan_time),float(ric_mass))
+        title = "m/z=%.3f%s &nbsp;&nbsp; time: %.2fmin%s" % (ric_mass,chargestr,float(scan_time),scanstr)
 
     data = "mz,intensity\\n"
     zs = ""
@@ -229,12 +279,11 @@ def scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_ma
 
     return text
 
-def scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1):
+def scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,charge,scan_num):
     if ctype == ".html":
         pnglink = rurl("scan_request",filename=filename,ctype=".png",scan_time=scan_time)
-        return scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,pnglink)
+        return scan_json_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,pnglink,charge,scan_num)
     
-    from cStringIO import StringIO
 
     if ctype == ".png" :
         fmt = "PNG"
@@ -243,10 +292,36 @@ def scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,ne
     if ctype == ".pdf" :
         fmt = "PDF"
     
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from cStringIO import StringIO
+    
+    precursor_ions = []
+    for k in range(1,charge+1):
+        precursor_ions.append("MH%s" %"".join(["+"]*k))
+
+
+    fig = Figure()
     tmp = StringIO()
-    printable = [(a[0],a[1]) for a in mzScan]
+    #printable = [(a[0],a[1]) for a in mzScan]
     mzTools.mz_image.set_size(6.4,4.8)
-    mzTools.mz_image.make_ms2_im(tmp, printable, "c", None, labels=None, ion_list=('b', 'y'),charge='', score='', acquisition_time=scan_time, fmt=fmt, label_top=50, filter_labels=True)
+
+    #mzTools.mz_image.make_ms2_im(fig, mzScan, "c", None, labels=None, ion_list=('b', 'y'), acquisition_time=scan_time, charge=charge, score='',filter_labels=False,scan_number=scan_num)
+    if ric_mass == 0 :
+        mzScan = [(x,y) for (x,y,z) in mzScan]
+        charge = 0
+        precursor_mz = 0
+        mzTools.mz_image._make_ms2(fig, mzScan, "c", None, title="time=%.2fmin  (scan# %d)" % (float(scan_time),scan_num), labels=None, ion_list=(['b', 'y']+precursor_ions),filter_labels=False, charge=charge)
+    else :
+        chargestr = ""
+        if charge :
+            chargestr = "(%d+)" % charge 
+        scanstr = ""
+        if scan_num :
+            scanstr = " (scan# %d)" % scan_num
+        print precursor_ions
+        mzTools.mz_image._make_ms2(fig, mzScan, "c", None, labels=None, ion_list=(['b', 'y']+precursor_ions), title="m/z=%.3f%s  time=%.2fmin%s" % (float(ric_mass),chargestr,float(scan_time),scanstr),filter_labels=False, charge=charge)
+    FigureCanvasAgg(fig).print_figure(tmp,format=fmt,dpi=80)
     text =  tmp.getvalue()
     
     return text
@@ -264,7 +339,7 @@ def wiff_match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_t
     filtered = [(mz,int) for (mz,int) in mzScan if (int > 1 and mz >= 750.0) or (int > 2 and mz < 750.0)]
     filtered = sorted(filtered, key=lambda mi: mi[1], reverse=True)[:1000]
     labels = generate_labels(filtered,sequence, ions=('b','b++','y','y++'),tolerance=0.2) 
-    (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=labels, ion_list=('b','b++','y','y++'), charge='', score='', acquisition_time=scan_time, label_top=500, filter_labels=True)
+    (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, title="m/z=%.3f time: %.2fmin"%(ric_mass,float(scan_time)),labels=labels, ion_list=('b','b++','y','y++'), charge='', score='', label_top=500, filter_labels=True)
     if ctype in [".pdf",".png",".svg"] :
         img_format = ctype
         FigureCanvasAgg(fig).print_figure(tmp,format=img_format[-3:].upper(),dpi=80)
@@ -282,76 +357,48 @@ def wiff_match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_t
 
     return text
 
-def old_match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type="cid",charge=0):
+def match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type="cid",charge=0,scan=0,precursor=0.0):
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from cStringIO import StringIO
-
-    
-    fig = Figure()
-    tmp = StringIO()
-    print sequence
-    if scan_type == "etd" :
-        if charge > 2 :
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2','c++', 'z+1++','z+2++'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
-        else:
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
-    else :
-        if charge > 2 :
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'b++', 'y', 'y++'), acquisition_time=scan_time, charge='', score='')
-        else:
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'y'), acquisition_time=scan_time, charge='', score='')            
-    if ctype in [".pdf",".png",".svg",".html"] :
-        img_format = ctype
-        if img_format == ".html" :
-            img_format = ".png"
-        FigureCanvasAgg(fig).print_figure(tmp,format=img_format[-3:].upper(),dpi=80)
-    if ctype in [".html",".png",".svg",".pdf"] :
-        text =  tmp.getvalue()
-    if ctype == ".html" :
-        if ric_mass == 0.0 :
-            disabled = 'disabled="disabled"'
-        else:
-            disabled = ""
-
-        match_template = Template(filename='templates/match.html')
-        scan_time_str = "%.2f" % float(scan_time)
-        img_text = urllib.quote(text)
-        prev_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(last_ms1))
-        prev_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(prev_time))
-        ric_link       = rurl("xic_request",filename=filename,ctype=ctype,start_time=shf(float(scan_time)-3),stop_time=shf(float(scan_time)+3),start_mz=shf(ric_mass-0.05),stop_mz=shf(ric_mass+0.05))
-        next_scan_link = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_time))
-        next_ms1_link  = rurl("scan_request",filename=filename,ctype=ctype,scan_time=shf(next_ms1))
-        text = match_template.render(ms2ico=ms2ico,scan_time=scan_time_str,img_text=img_text,disabled=disabled,prev_ms1_link = prev_ms1_link,prev_scan_link = prev_scan_link,ric_link=ric_link,next_scan_link = next_scan_link,next_ms1_link = next_ms1_link,javascript=javascript)        
-
-    if ctype == ".txt" :
-        text = `labeled`
-
-    return text
-
-def match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type="cid",charge=0):
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from cStringIO import StringIO
-
+    from mzFunctions import generate_labels
 
     fig = Figure()
     tmp = StringIO()
-    print sequence
+    chargestr = ""
+    if charge :
+        chargestr = "(%d+)" % charge 
+    scanstr = ""
+    if scan :
+        scanstr = " (scan# %d)" % scan
+    #precursor_ions = []
+    #for k in range(1,charge+1):
+    #    precursor_ions.append("MH%s" %"".join(["+"]*k))
     if scan_type == "etd" :
         if charge > 2 :
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2','c++', 'z+1++','z+2++'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
-        else:
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('c', 'z+1','z+2'), acquisition_time=scan_time, charge='', score='',filter_labels=False)
+            ion_list=['c', 'z+1','c++', 'z+1++','MH']
+        if charge > 0 :
+            ion_list=['c', 'z+1','MH']
+        if charge == 0 :
+            ion_list=['c', 'z+1']
     else :
         if charge > 2 :
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'b++', 'y', 'y++'), acquisition_time=scan_time, charge='', score='')
-        else:
-            (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, labels=None, ion_list=('b', 'y'), acquisition_time=scan_time, charge='', score='')
+            ion_list=['b', 'b++', 'y', 'y++','MH']
+        if charge > 0 :
+            ion_list=['b', 'y','MH']
+        if charge == 0:
+            ion_list=['b', 'y']
+
+    filtered = [(mz,int) for (mz,int) in mzScan]
+    filtered = sorted(filtered, key=lambda mi: mi[1], reverse=True)[:50]
+    labels = generate_labels(filtered,sequence, ions=ion_list,tolerance=0.6, charge=charge) 
+    print labels
+    new_labels = []
+    for (x,lab) in labels:
+        new_labels.append( (x,lab.split()[0]) )
+    (labeled,ignore) = mzTools.mz_image._make_ms2(fig, mzScan, "c", sequence, title="m/z=%.3f%s  time=%.2fmin%s" % (float(ric_mass),chargestr,float(scan_time),scanstr), labels=new_labels, ion_list=ion_list, charge=charge, filter_labels=False)
     if ctype in [".pdf",".png",".svg"] :
         img_format = ctype
-        if img_format == ".svw" :
-            img_format = ".svg"
         FigureCanvasAgg(fig).print_figure(tmp,format=img_format[-3:].upper(),dpi=80)
     if ctype in [".png",".svg",".pdf"] :
         text =  tmp.getvalue()
@@ -641,7 +688,7 @@ class Root:
                         last_ms1 = file.timeForScan(ms1_lscan)
                         break
 
-                text = scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1)
+                text = scan_template(mzScan,scan_time,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,charge,scan_num)
         if file.file_type == "wiff" :
             scan_time = float(scan_time)
             (first_time,last_time) = file.time_range()
@@ -680,7 +727,7 @@ class Root:
                     text += "%.4f\t%.0f\n" % (vals[0], vals[1])
                 text += "END IONS\n"
             if ctype not in [".txt",".mgf",".dta"]:
-                text = scan_template(mzScan,scan_time,ctype,filename,-1.0,scan_time,precursor,scan_time,-1.0)
+                text = scan_template(mzScan,scan_time,ctype,filename,-1.0,scan_time,precursor,scan_time,-1.0,0,0)
                 
         return text
 
@@ -892,7 +939,7 @@ class Root:
                 scan_type = "hcd"
             if the_filters[scan_num-1][1].find("@cid") > -1:
                 scan_type = "cid"
-            text = match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type,charge)
+            text = match_template(scan_time,mzScan,sequence,ctype,filename,last_ms1,prev_time,ric_mass,next_time,next_ms1,scan_type,charge,scan_num,ric_mass)
         else:
             target_time = float(scan_time)
             mzScan = []

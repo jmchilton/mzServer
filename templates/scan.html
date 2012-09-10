@@ -13,10 +13,12 @@
 <center>
 <table id="the_table">
 <tr>
-<td align="center">${title}</td>
+<td id="the_scan_title" align="center"></td>
 </tr>
 <tr>
-<td><div id="graphdiv" style="width:640px; height:480px;"></div></td>
+<td><div id="graphdiv" style="width:640px; height:480px;">
+<img style='width:640px; height:480px;' src='${pnglink}'/>
+</div></td>
 </tr>
 <tr>
 <td height="5">
@@ -38,13 +40,13 @@
 <tr>
 <td align="center">
 <div id="usagetip" style="font-family: arial, sans-serif; font-size:0.6em;">
-left-drag to zoom, left-click to generate an XIC
+* upgrading to FF/Chrome/Safari/IE9 enables better graphics, zoom and XIC generation capabilities...<a href='http://blaispathways.dfci.harvard.edu/mzServer/apps/mzServer_ASMS2010.pdf'>Examples</a>
 </div>
 </td>
 </tr>
 </table>
 <script type="text/javascript">
-if(svgcheck){
+if(canvascheck){
                 g = new MZgraph(document.getElementById("graphdiv"), "${data}", {
                 labelsDivWidth: 125, labelsKMB: true,
                 labelsSeparateLines: true,
@@ -62,12 +64,9 @@ if(svgcheck){
                                 }
                 }
                 );
-}else{
-document.getElementById("graphdiv").innerHTML = "<img style='width:640px; height:480px;' src='${pnglink}'/>" ;
-document.getElementById('usagetip').innerHTML="* upgrading to FF/Chrome/Safari/IE9 enables better graphics, zoom and XIC generation capabilities...<a href='http://blaispathways.dfci.harvard.edu/mzServer/apps/mzServer_ASMS2010.pdf'>Examples</a>" ;
-document.getElementById('the_table').deleteRow(0) ;
-}
-</script>
+document.getElementById('usagetip').innerHTML="left-drag to zoom, left-click to generate an XIC" ;
+document.getElementById('the_scan_title').innerHTML = "${title}" ;
+}</script>
 </center>
 </body>
 </html>

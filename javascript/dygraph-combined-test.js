@@ -1159,7 +1159,7 @@ Dygraph.prototype.createToolbar_ = function(){
     };
     var b = document.createElement("div");
     c(b);
-    b.innerHTML = '<img src="/images/zoom_out.gif" width=20 height=20 />';
+    b.innerHTML = '<img src="http://blaispathways.dfci.harvard.edu/mzServer/images/zoom_out.gif" width=20 height=20 />';
     b.onclick = function(){
         e.updateOptions({
             dateWindow: null

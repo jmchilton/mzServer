@@ -8,11 +8,10 @@
 </head>
 <body>
 <center>
-<iframe id="svgtv"  width="667" height="500" scrolling="no" src='${svglink}'>
+<iframe id="svgtv"  width="667" height="500" scrolling="no" src=''>
 What, no iframe support?
 </iframe>
-
-<script type="text/javascript">if(!svgcheck){document.getElementById('svgtv').src="${pnglink}"}</script>
+<script type="text/javascript">if(svgcheck){document.getElementById('svgtv').src="${svglink}"}else{document.getElementById('svgtv').src="${pnglink}"}</script>
 
 
 <table border=0>
